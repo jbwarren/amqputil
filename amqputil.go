@@ -31,7 +31,7 @@ type Channel struct {
 // Dial() initializes a Connection object, including its contained Channel object
 // if any error occurs, it returns a nil Connection
 // flags control the initializtion of various (golang) channels (via Notify_() methods) for monitoring out-of-band events
-// <confirms> specifies the capacity of channels used for acks & nacks for reliable publishing, (via NotifyConfirm())
+// if <confirms> is >= 0, then the channel will be put into confirm mode, and <confirms> specifies the capacity of channels for receiving acks/nacks
 // if <confirms> is < 0, then reliable publishing will not be used
 func Dial(url string, blockings, cancels, closings, flows, returns bool, confirms int) (conn *Connection, dialErr, channelErr error) {
 	c, dialErr := amqp.Dial(url) // connect to server
@@ -41,7 +41,7 @@ func Dial(url string, blockings, cancels, closings, flows, returns bool, confirm
 			conn.Blockings = conn.NotifyBlocked(make(chan amqp.Blocking))
 		}
 		conn.Channel, channelErr = conn.NewChannel(cancels, closings, flows, returns, confirms) // create Channel
-		if channelErr != nil {                                                                  // unwind
+		if channelErr != nil {                                                                  // unwind on error
 			c.Close()
 			conn = nil
 		}
@@ -68,7 +68,7 @@ func (conn *Connection) Close() {
 // creates a Channel object that may be used separately from this Connection object
 // if any error occurs, returns a nil Channel
 // flags control the initializtion of various (golang) channels (via Notify_() methods) for monitoring out-of-band events
-// <confirms> specifies the capacity of channels used for acks & nacks for reliable publishing, (via NotifyConfirm())
+// if <confirms> is >= 0, then the channel will be put into confirm mode, and <confirms> specifies the capacity of channels for receiving acks/nacks
 // if <confirms> is < 0, then reliable publishing will not be used
 // NOTE:  this function is also called by Dial() to initialize the Connection's own Channel object
 func (conn *Connection) NewChannel(cancels, closings, flows, returns bool, confirms int) (channel *Channel, err error) {
@@ -89,6 +89,11 @@ func (conn *Connection) NewChannel(cancels, closings, flows, returns bool, confi
 		}
 		if confirms >= 0 {
 			channel.Acks, channel.Nacks = channel.NotifyConfirm(make(chan uint64, confirms), make(chan uint64, confirms))
+			err = channel.Confirm(false) // put into confirm mode (synchronous call)
+			if err != nil {              // unwind on error
+				channel.Close()
+				channel = nil
+			}
 		}
 	}
 	return
